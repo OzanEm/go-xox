@@ -27,7 +27,7 @@ func (r *PostgresRepository) ByUsername(ctx context.Context, username string) (*
 	const query = `
 		SELECT id, username, password_hash, created_at
 		FROM users
-		WHERE username = $1`
+		WHERE lower(username) = lower($1)`
 
 	var u User
 	err := r.pool.QueryRow(ctx, query, username).
@@ -111,7 +111,7 @@ func (r *PostgresRepository) GetLeaderBoard(ctx context.Context) ([]User, error)
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, username, wins, losses, draws
 		FROM users
-		ORDER BY wins DESC
+		ORDER BY wins DESC, losses ASC, username ASC
 		LIMIT 100`)
 	if err != nil {
 		return nil, err

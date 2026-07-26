@@ -5,11 +5,9 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,27 +40,34 @@ func run(server, username, password string) error {
 	if err := register(server, username, password); err != nil {
 		return err
 	}
-	token, err := login(server, username, password)
+	pair, err := login(server, username, password)
 	if err != nil {
 		return err
 	}
+	sess := newSession(pair)
 
-	conn, err := dialWS(server, token)
+	// Refresh the access token in the background for the life of the session,
+	// so the per-message token never expires mid-game. Stops when run returns.
+	stop := make(chan struct{})
+	defer close(stop)
+	go sess.keepFresh(server, stop)
+
+	conn, err := dialWS(server, sess.token())
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
 	fmt.Printf("connected as %s — joining the queue...\n", username)
-	if err := send(conn, protocol.TypeJoinQueue, protocol.JoinQueuePayload{Token: token}); err != nil {
+	if err := send(conn, protocol.TypeJoinQueue, protocol.JoinQueuePayload{Token: sess.token()}); err != nil {
 		return err
 	}
 
-	return play(conn, token)
+	return play(conn, sess)
 }
 
 // Main game loop
-func play(conn *websocket.Conn, token string) error {
+func play(conn *websocket.Conn, sess *session) error {
 	incoming := make(chan protocol.Envelope)
 	go func() {
 		defer close(incoming)
@@ -123,7 +128,7 @@ func play(conn *websocket.Conn, token string) error {
 				fmt.Print("that's not a number 0-8, try again: ")
 				continue
 			}
-			if err := send(conn, protocol.TypeMove, protocol.MovePayload{Cell: cell, Token: token}); err != nil {
+			if err := send(conn, protocol.TypeMove, protocol.MovePayload{Cell: cell, Token: sess.token()}); err != nil {
 				return err
 			}
 
@@ -211,40 +216,6 @@ func send(conn *websocket.Conn, t protocol.MessageType, payload any) error {
 	return conn.WriteJSON(env)
 }
 
-func register(server, username, password string) error {
-	resp, err := postJSON(server+"/register", map[string]string{"username": username, "password": password})
-	if err != nil {
-		return fmt.Errorf("register request: %w", err)
-	}
-	defer resp.Body.Close()
-	// 201 = created, 409 = already registered, both are ok
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
-		return fmt.Errorf("register failed: %s", statusBody(resp))
-	}
-	return nil
-}
-
-func login(server, username, password string) (string, error) {
-	resp, err := postJSON(server+"/login", map[string]string{"username": username, "password": password})
-	if err != nil {
-		return "", fmt.Errorf("login request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("login failed: %s", statusBody(resp))
-	}
-	var body struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decode login response: %w", err)
-	}
-	if body.AccessToken == "" {
-		return "", fmt.Errorf("login response carried no access token")
-	}
-	return body.AccessToken, nil
-}
-
 func dialWS(server, token string) (*websocket.Conn, error) {
 	u, err := url.Parse(server)
 	if err != nil {
@@ -269,21 +240,4 @@ func dialWS(server, token string) (*websocket.Conn, error) {
 		return nil, fmt.Errorf("ws dial: %w", err)
 	}
 	return conn, nil
-}
-
-func postJSON(url string, body any) (*http.Response, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	return http.Post(url, "application/json", bytes.NewReader(data))
-}
-
-func statusBody(resp *http.Response) string {
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<10))
-	msg := strings.TrimSpace(string(b))
-	if msg == "" {
-		return resp.Status
-	}
-	return fmt.Sprintf("%s: %s", resp.Status, msg)
 }

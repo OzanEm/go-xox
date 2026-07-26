@@ -74,8 +74,10 @@ have exactly one thing to parse on failure:
 | `GET`  | `/ws`          | Bearer | Upgrade to the game WebSocket                |
 
 - `/register` validates username (3–50 chars) and password (8–72 — bcrypt's
-  input limit) and returns `409 username_taken` on conflict. Uniqueness is
-  case-insensitive, enforced by a database unique index.
+  input limit) and returns `409 username_taken` on conflict. Usernames are
+  case-insensitive — uniqueness is enforced by a unique index on
+  `lower(username)`, and login matches the same way, so `Alice` can log in
+  as `alice`.
 - `/login` returns `{access_token, access_expires_at, refresh_token,
 refresh_expires_at}`. Unknown user and wrong password are deliberately the
   same `401`.
@@ -146,6 +148,18 @@ afterwards; re-checking per operation is stricter, costs only an in-memory
 HMAC check, and means a token expiring mid-session is caught on the next
 operation instead of never).
 
+### Refresh tokens
+
+The tradeoff of a self-contained JWT is that it cannot be revoked, so the
+access token is deliberately short-lived (30 min, `JWT_TTL`) and paired with
+an opaque refresh token that _is_ server-side state: 32 random bytes, stored
+**hashed** (SHA-256) so a database leak leaks nothing exchangeable, revocable
+via `POST /logout`, and **rotated on every use** — a refresh token that is
+replayed after being exchanged is already revoked. The CLI client refreshes
+its access token in the background shortly before expiry, so the
+per-operation token it sends over the WebSocket stays valid for the whole
+session without the player ever re-logging in.
+
 ### Password storage
 
 Passwords are hashed with bcrypt at cost 12. bcrypt is deliberately slow and
@@ -170,11 +184,11 @@ migrations/            schema, applied on first database start
 ```
 
 Dependencies point inward, and interfaces are declared by their consumers
-(`httpapi.AuthService`, `server.StatsRecorder`, `user.Repository`), so each
-layer states only what it uses and unit tests run with in-memory fakes — no
-database, no sockets.
+(`httpapi.AuthService`, `httpapi.LeaderBoard`, `server.StatsRecorder`), so
+each layer states only what it uses and unit tests run with in-memory fakes —
+no database, no sockets.
 
-**Concurrency model** — the part worth reading closely:
+**Concurrency model**
 
 - **One writer per WebSocket.** `gorilla/websocket` panics on concurrent
   writers, so each connection has a buffered outbound channel drained by a
@@ -189,9 +203,12 @@ database, no sockets.
 - **Matchmaking under one lock hold.** Popping two players and creating their
   game is a single critical section, so the same player cannot be paired
   twice and a disconnect cannot interleave mid-pairing.
-- **Stats recording happens after every lock is released** — persistence I/O
-  never sits inside a critical section, and a failed stat write is logged
-  rather than allowed to break gameplay.
+- **Stats recording happens after every lock is released on the move path** —
+  when a game ends by a move, persistence I/O runs outside every critical
+  section, and a failed stat write is logged rather than allowed to break
+  gameplay. (Known simplification: the forfeit-on-disconnect path records
+  while the hub lock is held; correct, but a slow write there would briefly
+  stall other connections.)
 
 The suite runs clean under `go test -race ./...`, including an integration
 test that plays full games over real WebSocket connections.
@@ -225,9 +242,3 @@ make test-race
   full game to a win with per-player results, forfeit on disconnect, empty
   move payloads rejected, unauthenticated upgrades rejected, and stats
   recorded with the right winner/loser.
-
-Known thin spot, stated honestly: the transport layer has one end-to-end test
-per behaviour rather than exhaustive coverage, and there is no test yet
-running two games _simultaneously_ — the locking design supports it and the
-race detector covers the shared structures, but a dedicated crosstalk test
-would strengthen the claim.
