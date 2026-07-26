@@ -1,0 +1,9 @@
+.git/
+.env
+/bin/
+/tmp/
+/out/
+*.md
+.air.toml
+docker-compose.yml
+.DS_Store

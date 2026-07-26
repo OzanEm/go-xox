@@ -1,0 +1,20 @@
+# Build output
+/bin/
+/tmp/
+/out/
+
+# Local environment — .env.example is the committed template
+.env
+
+.local/
+PLAN.md
+TASK.md
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Test artifacts
+*.out
+coverage.html
