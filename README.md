@@ -123,7 +123,7 @@ debugging with `websocat`. X always moves first; the longer-waiting player is X.
 
 Error codes a client can branch on: `not_your_turn`, `cell_occupied`,
 `out_of_bounds`, `game_over`, `no_active_game`, `already_queued`,
-`bad_message`, `unknown_type`, `invalid_token`.
+`already_in_game`, `bad_message`, `unknown_type`, `invalid_token`.
 
 Rules are enforced **server-side only** — the CLI's own checks are UX, not
 security, since a hostile client is just a websocket session sending raw JSON.

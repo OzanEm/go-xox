@@ -59,6 +59,17 @@ func (h *Hub) JoinQueue(c *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// A player belongs to at most one of {queue, game}. The queue only knows
+	// about its own membership, so the in-game half of that invariant is
+	// enforced here — before the join, so a stray request never pops an
+	// innocent opponent out of the queue.
+	if h.games.InGame(c.userID) {
+		h.sendLocked(c.userID, env(protocol.TypeError, protocol.ErrorPayload{
+			Code: "already_in_game", Message: "finish your current game before queueing again",
+		}))
+		return
+	}
+
 	match, paired, err := h.queue.Join(c.userID)
 	if errors.Is(err, matchmaking.ErrAlreadyQueued) {
 		h.sendLocked(c.userID, env(protocol.TypeError, protocol.ErrorPayload{

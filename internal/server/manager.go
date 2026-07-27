@@ -178,6 +178,15 @@ func (gm *GameManager) Forfeit(userID int64) []outbound {
 	}
 }
 
+// InGame reports whether the user is currently playing. The hub uses it to keep
+// a player from queueing while a game of theirs is still running.
+func (gm *GameManager) InGame(userID int64) bool {
+	gm.mu.Lock()
+	defer gm.mu.Unlock()
+	_, ok := gm.byUser[userID]
+	return ok
+}
+
 func (gm *GameManager) sessionForUser(userID int64) *session {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
@@ -191,8 +200,15 @@ func (gm *GameManager) sessionForUser(userID int64) *session {
 func (gm *GameManager) remove(id string, a, b int64) {
 	gm.mu.Lock()
 	delete(gm.games, id)
-	delete(gm.byUser, a)
-	delete(gm.byUser, b)
+	// Drop a player's mapping only while it still points at the game being torn
+	// down. An unconditional delete would evict a player from a *different*,
+	// live game if they ever ended up in two at once.
+	if gm.byUser[a] == id {
+		delete(gm.byUser, a)
+	}
+	if gm.byUser[b] == id {
+		delete(gm.byUser, b)
+	}
 	gm.mu.Unlock()
 }
 

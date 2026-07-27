@@ -289,6 +289,42 @@ func TestRejectsDoubleQueue(t *testing.T) {
 	}
 }
 
+func TestRejectsQueueJoinWhileInGame(t *testing.T) {
+	srv, issuer := newTestServer(t)
+
+	tokenA := mintToken(t, issuer, 1, "alice")
+	tokenB := mintToken(t, issuer, 2, "bob")
+	tokenC := mintToken(t, issuer, 3, "carol")
+	cA := mustDial(t, srv.URL, tokenA)
+	cB := mustDial(t, srv.URL, tokenB)
+	cC := mustDial(t, srv.URL, tokenC)
+
+	joinQueue(t, cA, tokenA)
+	joinQueue(t, cB, tokenB)
+	expect(t, cA, protocol.TypeMatchFound)
+	expect(t, cB, protocol.TypeMatchFound)
+
+	// alice queues again mid-game. Without the guard she is parked, carol's
+	// join pairs the two of them, and alice ends up in two games at once.
+	joinQueue(t, cA, tokenA)
+
+	env := expect(t, cA, protocol.TypeError)
+	p, err := protocol.DecodePayload[protocol.ErrorPayload](env)
+	if err != nil {
+		t.Fatalf("decode error payload: %v", err)
+	}
+	if p.Code != "already_in_game" {
+		t.Errorf("error code = %q, want already_in_game", p.Code)
+	}
+
+	// carol must still be waiting, not matched with a player who never left.
+	joinQueue(t, cC, tokenC)
+	_ = cC.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, _, err := cC.ReadMessage(); err == nil {
+		t.Error("carol was matched with a player who is already in a game")
+	}
+}
+
 func TestEmptyMoveRejected(t *testing.T) {
 	srv, issuer := newTestServer(t)
 	c := mustDial(t, srv.URL, mintToken(t, issuer, 1, "alice"))
