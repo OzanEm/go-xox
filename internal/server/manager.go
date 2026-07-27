@@ -38,6 +38,12 @@ type session struct {
 	mu      sync.Mutex
 	game    *game.Game
 	players [2]sessionPlayer
+
+	// done is set (under mu) by whichever of the move / forfeit paths ends
+	// the game first; the loser of that race becomes a no-op, so a result
+	// is recorded exactly once even when a winning move and a disconnect
+	// land at the same instant.
+	done bool
 }
 
 type sessionPlayer struct {
@@ -102,6 +108,10 @@ func (gm *GameManager) Apply(userID int64, cell int) ([]outbound, error) {
 	}
 
 	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return nil, errNoActiveGame
+	}
 	mark, ok := s.markOf(userID)
 	if !ok {
 		s.mu.Unlock()
@@ -112,6 +122,9 @@ func (gm *GameManager) Apply(userID int64, cell int) ([]outbound, error) {
 		return nil, err
 	}
 	over := s.game.IsOver()
+	if over {
+		s.done = true
+	}
 	board := toBoard(s.game.Board())
 	turn := toMark(s.game.Turn())
 	winner := s.game.Winner()
@@ -141,7 +154,8 @@ func (gm *GameManager) Forfeit(userID int64) []outbound {
 			opponent = p
 		}
 	}
-	alreadyOver := s.game.IsOver()
+	alreadyOver := s.done
+	s.done = true
 	board := toBoard(s.game.Board())
 	players := s.players
 	s.mu.Unlock()
