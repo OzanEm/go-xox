@@ -203,6 +203,12 @@ no database, no sockets.
 - **Matchmaking under one lock hold.** Popping two players and creating their
   game is a single critical section, so the same player cannot be paired
   twice and a disconnect cannot interleave mid-pairing.
+- **A game ends exactly once.** A winning move and the loser's disconnect can
+  land at the same instant, and both the move path and the forfeit path end
+  the game and record a result. Each therefore check-and-sets a `done` flag
+  inside the session lock; whichever loses that race becomes a no-op, so a
+  result is never double-counted. Pinned by a regression test that races the
+  two paths a thousand times under the race detector.
 - **Stats recording happens after every lock is released on the move path** —
   when a game ends by a move, persistence I/O runs outside every critical
   section, and a failed stat write is logged rather than allowed to break

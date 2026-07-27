@@ -7,10 +7,6 @@ import (
 	"testing"
 )
 
-// A winning move and the loser's disconnect can land at the same instant. The
-// move path (Apply) and the forfeit path (Forfeit) each decide "this game is
-// over" and each records a result — this pins that whichever wins the race,
-// the game is recorded exactly once, with the right winner.
 func TestGameEndsExactlyOnce_MoveVsForfeit(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

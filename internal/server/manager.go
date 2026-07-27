@@ -38,7 +38,6 @@ type session struct {
 	mu      sync.Mutex
 	game    *game.Game
 	players [2]sessionPlayer
-
 	// done is set (under mu) by whichever of the move / forfeit paths ends
 	// the game first; the loser of that race becomes a no-op, so a result
 	// is recorded exactly once even when a winning move and a disconnect
