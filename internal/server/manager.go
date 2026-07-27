@@ -12,7 +12,10 @@ import (
 	"github.com/ozanem/go-xox/pkg/protocol"
 )
 
-var errNoActiveGame = errors.New("no active game")
+var (
+	errNoActiveGame  = errors.New("no active game")
+	errAlreadyInGame = errors.New("player is already in a game")
+)
 
 type outbound struct {
 	userID int64
@@ -75,7 +78,15 @@ func (gm *GameManager) recordResult(winner game.Cell, players [2]sessionPlayer) 
 	}
 }
 
-func (gm *GameManager) Create(aUserID, bUserID int64) []outbound {
+func (gm *GameManager) Create(aUserID, bUserID int64) ([]outbound, error) {
+	gm.mu.Lock()
+	for _, uid := range [2]int64{aUserID, bUserID} {
+		if _, ok := gm.byUser[uid]; ok {
+			gm.mu.Unlock()
+			return nil, fmt.Errorf("%w: %d", errAlreadyInGame, uid)
+		}
+	}
+
 	id := fmt.Sprintf("g%d", gm.counter.Add(1))
 	s := &session{
 		id:   id,
@@ -85,8 +96,6 @@ func (gm *GameManager) Create(aUserID, bUserID int64) []outbound {
 			{userID: bUserID, mark: game.O},
 		},
 	}
-
-	gm.mu.Lock()
 	gm.games[id] = s
 	gm.byUser[aUserID] = id
 	gm.byUser[bUserID] = id
@@ -97,7 +106,7 @@ func (gm *GameManager) Create(aUserID, bUserID int64) []outbound {
 	return []outbound{
 		{aUserID, env(protocol.TypeMatchFound, protocol.MatchFoundPayload{GameID: id, Symbol: protocol.X, Board: board, Turn: turn})},
 		{bUserID, env(protocol.TypeMatchFound, protocol.MatchFoundPayload{GameID: id, Symbol: protocol.O, Board: board, Turn: turn})},
-	}
+	}, nil
 }
 
 func (gm *GameManager) Apply(userID int64, cell int) ([]outbound, error) {
@@ -178,8 +187,6 @@ func (gm *GameManager) Forfeit(userID int64) []outbound {
 	}
 }
 
-// InGame reports whether the user is currently playing. The hub uses it to keep
-// a player from queueing while a game of theirs is still running.
 func (gm *GameManager) InGame(userID int64) bool {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
@@ -200,15 +207,8 @@ func (gm *GameManager) sessionForUser(userID int64) *session {
 func (gm *GameManager) remove(id string, a, b int64) {
 	gm.mu.Lock()
 	delete(gm.games, id)
-	// Drop a player's mapping only while it still points at the game being torn
-	// down. An unconditional delete would evict a player from a *different*,
-	// live game if they ever ended up in two at once.
-	if gm.byUser[a] == id {
-		delete(gm.byUser, a)
-	}
-	if gm.byUser[b] == id {
-		delete(gm.byUser, b)
-	}
+	delete(gm.byUser, a)
+	delete(gm.byUser, b)
 	gm.mu.Unlock()
 }
 
